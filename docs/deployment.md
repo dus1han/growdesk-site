@@ -6,11 +6,12 @@ only pulls and restarts. Caddy fronts it with TLS once a domain exists.
 
 | | |
 |---|---|
+| Public origin | `https://growdesk.site` (`www` redirects to it) |
 | Server | `169.58.92.105` |
 | Site directory | `/opt/sites/growdesk-site` |
 | Container | `growdesk-site` |
-| Image | `ghcr.io/<owner>/<repo>:latest` — **lowercase** |
-| Port | **3103**, `127.0.0.1` once a domain exists (3101 Nicole, 3102 Luis, 3110 GrowDesk CRM) |
+| Image | `ghcr.io/dus1han/growdesk-site:latest` (public package — no GHCR secrets needed) |
+| Port | **3103**, `127.0.0.1` once a domain exists (3101 Nicole, 3102 Luis, 3110 GrowDesk CRM, 3111 GrowDesk Marist) |
 | Runtime | nginx serving the static export — no Node process in production |
 
 ## 1 · GitHub
@@ -35,7 +36,7 @@ only pulls and restarts. Caddy fronts it with TLS once a domain exists.
 sudo ss -ltnp | grep ':3103'   # must print nothing
 sudo mkdir -p /opt/sites/growdesk-site
 sudo chown -R deploy:deploy /opt/sites/growdesk-site
-sudo -u deploy bash -c 'printf "IMAGE=ghcr.io/<owner>/<repo>:latest\nCONTAINER_NAME=growdesk-site\nSITE_PORT=3103\n" > /opt/sites/growdesk-site/.env'
+sudo -u deploy bash -c 'printf "IMAGE=ghcr.io/dus1han/growdesk-site:latest\nCONTAINER_NAME=growdesk-site\nSITE_PORT=3103\n" > /opt/sites/growdesk-site/.env'
 ```
 
 Write `.env` with one command as above — an interrupted heredoc leaves an empty file.
@@ -45,10 +46,12 @@ If the firewall is active: `sudo ufw allow 3103/tcp`.
 
 ## 3 · Domain (at launch)
 
-1. DNS A record → `169.58.92.105` (unproxied). Check: `dig +short <domain>`.
-2. Append `deploy/Caddyfile.block` (with the real hostname) to `/opt/sites/caddy/Caddyfile`, then
+1. Namecheap → growdesk.site → Advanced DNS: A record `@` → `169.58.92.105` and A record `www` →
+   `169.58.92.105`; delete Namecheap's default parking CNAME / URL-redirect records on `@` and `www`.
+   Check: `nslookup growdesk.site 8.8.8.8`.
+2. Append `deploy/Caddyfile.block` to `/opt/sites/caddy/Caddyfile` (root-owned — needs sudo), then
    `cd /opt/sites/caddy && docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile`.
-3. Set the `SITE_URL` variable and re-run the workflow. The deploy script then rebinds the port to
+3. Set the `SITE_URL` variable to `https://growdesk.site` and re-run the workflow. The deploy script then rebinds the port to
    `127.0.0.1` automatically, closing the plain-HTTP preview, and the build becomes indexable.
 
 ## Deploying

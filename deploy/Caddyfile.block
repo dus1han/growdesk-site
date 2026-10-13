@@ -1,10 +1,10 @@
 # Append to the server-wide /opt/sites/caddy/Caddyfile — do NOT replace it,
-# it holds every other site. Replace the hostname, then:
+# it holds every other site (incl. marist.growdesk.site on 3111). Then:
 #
 #   cd /opt/sites/caddy
 #   docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
 
-growdesk.example.com {
+growdesk.site {
     reverse_proxy 127.0.0.1:3103
 
     encode gzip zstd
@@ -22,4 +22,9 @@ growdesk.example.com {
             roll_keep 5
         }
     }
+}
+
+# One canonical host: www redirects to the apex.
+www.growdesk.site {
+    redir https://growdesk.site{uri} permanent
 }
