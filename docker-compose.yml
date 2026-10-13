@@ -1,0 +1,27 @@
+# One stack per site, in /opt/sites/growdesk-site/ on the VPS, next to a .env
+# holding IMAGE, CONTAINER_NAME and SITE_PORT. Shipped by every deploy.
+#
+# BIND_ADDR is managed by deploy/remote-deploy.sh: 0.0.0.0 while there is no
+# SITE_URL (preview on the server's IP), 127.0.0.1 once a domain exists and
+# Caddy fronts the site.
+
+services:
+  web:
+    image: ${IMAGE}
+    container_name: ${CONTAINER_NAME}
+    restart: unless-stopped
+    ports:
+      - '${BIND_ADDR:-127.0.0.1}:${SITE_PORT}:3000'
+    environment:
+      TZ: Asia/Dubai
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1:3000/']
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'

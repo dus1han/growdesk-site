@@ -1,0 +1,122 @@
+name: Build and deploy
+
+# Same model as the landing pages: the image is built on GitHub's runners and
+# pushed to GHCR; the VPS only pulls and restarts. See docs/deployment.md.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# One deploy at a time. A second run waits rather than cancelling one mid-flight,
+# which could leave a half-replaced container.
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    name: Build image
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Report origin
+        run: |
+          if [ -z "${{ vars.SITE_URL }}" ]; then
+            echo "::warning::SITE_URL is not set — this build is noindex and will be served on the server's IP."
+          else
+            echo "✓ Origin: ${{ vars.SITE_URL }}"
+          fi
+
+      # GHCR image names must be lower-case; the repository name may not be.
+      - name: Image name
+        run: echo "IMAGE=${REGISTRY}/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          # `latest` is what the server pulls; the SHA tag is what you roll back to.
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          build-args: |
+            SITE_URL=${{ vars.SITE_URL }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    name: Deploy to VPS
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pull and restart over SSH
+        env:
+          SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_PORT: ${{ secrets.VPS_PORT || 22 }}
+          SITE_PATH: ${{ secrets.VPS_SITE_PATH }}
+          GHCR_USERNAME: ${{ secrets.GHCR_USERNAME }}
+          GHCR_PAT: ${{ secrets.GHCR_PAT }}
+          SITE_URL: ${{ vars.SITE_URL }}
+        run: |
+          set -euo pipefail
+
+          for v in SSH_KEY VPS_HOST VPS_USER SITE_PATH; do
+            if [ -z "${!v}" ]; then
+              echo "::error::Required secret is empty: ${v/SSH_KEY/VPS_SSH_KEY}"
+              exit 1
+            fi
+          done
+
+          mkdir -p ~/.ssh
+          # Rebuild the key from its base64 body so the secret works however it was pasted.
+          {
+            echo '-----BEGIN OPENSSH PRIVATE KEY-----'
+            printf '%s\n' "$SSH_KEY" | grep -v -- '-----' | tr -d ' \t\r\n' | fold -w 70
+            echo
+            echo '-----END OPENSSH PRIVATE KEY-----'
+          } > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keygen -y -f ~/.ssh/id_deploy >/dev/null 2>&1 || {
+            echo "::error::VPS_SSH_KEY is not a valid OpenSSH private key."
+            exit 1
+          }
+
+          ssh-keyscan -p "$VPS_PORT" "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          SSH="ssh -i $HOME/.ssh/id_deploy -p $VPS_PORT -o ConnectTimeout=20 -o BatchMode=yes $VPS_USER@$VPS_HOST"
+
+          $SSH true || { echo "::error::SSH login to the VPS failed. Check VPS_HOST, VPS_USER and VPS_SSH_KEY."; exit 1; }
+          $SSH "test -d '$SITE_PATH' && test -f '$SITE_PATH/.env'" || {
+            echo "::error::Site directory or its .env is missing on the server. See docs/deployment.md step 2."
+            exit 1
+          }
+
+          # The compose file is a deploy artefact: shipped every time, so edits to it always arrive.
+          scp -i ~/.ssh/id_deploy -P "$VPS_PORT" docker-compose.yml "$VPS_USER@$VPS_HOST:$SITE_PATH/docker-compose.yml"
+
+          {
+            printf 'SITE_PATH=%q\n'     "$SITE_PATH"
+            printf 'GHCR_USERNAME=%q\n' "$GHCR_USERNAME"
+            printf 'GHCR_PAT=%q\n'      "$GHCR_PAT"
+            printf 'SITE_URL=%q\n'      "$SITE_URL"
+            cat deploy/remote-deploy.sh
+          } | $SSH 'bash -s'

@@ -1,0 +1,25 @@
+# Append to the server-wide /opt/sites/caddy/Caddyfile — do NOT replace it,
+# it holds every other site. Replace the hostname, then:
+#
+#   cd /opt/sites/caddy
+#   docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile
+
+growdesk.example.com {
+    reverse_proxy 127.0.0.1:3103
+
+    encode gzip zstd
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options    "nosniff"
+        Referrer-Policy           "strict-origin-when-cross-origin"
+        -Server
+    }
+
+    log {
+        output file /var/log/caddy/growdesk-site.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+    }
+}
